@@ -102,7 +102,7 @@ class ResourcePaths:
         return [self.key(f'resources.populations.{name}') for name in names]
 
     def inference_keys(self):
-        return [self.tuple_key('model'), self.tuple_key('gnn.checkpoint'), self.key('resources.data'),
+        return [self.tuple_key('model'), self.tuple_key('gnn'), self.key('resources.data'),
                 self.key('resources.signature_bank')]
 
     def population_keys(self):
@@ -112,7 +112,7 @@ class ResourcePaths:
     def training_keys(self):
         """Files a bundle is trained from, the signature bank aside."""
         spec = self.dataset_config.get('training') or {}
-        keys = [self.tuple_key('gnn.checkpoint'), self.key('resources.data'), *self.population_keys()]
+        keys = [self.tuple_key('gnn'), self.key('resources.data'), *self.population_keys()]
         if spec.get('targets') is None and spec.get('labeled_population') is not None:
             keys.append(self.key(f'resources.populations.{spec["labeled_population"]}'))
         return keys
@@ -154,7 +154,6 @@ class ResolvedConfig:
     dataset_config: dict[str, Any]
     tuple_config: dict[str, Any]
     paths: ResourcePaths
-    verify_checksums: bool
 
     @property
     def domain(self):
@@ -176,10 +175,6 @@ class ResolvedConfig:
         return self.parameters['execution']
 
     @property
-    def stage1(self):
-        return self.parameters['stage1']
-
-    @property
     def resources(self):
         return dict(self.dataset_config['resources'], data=str(self.paths.resource('data')))
 
@@ -189,7 +184,7 @@ class ResolvedConfig:
 
     @property
     def gnn_path(self):
-        return self.paths.resolve(self.paths.tuple_key('gnn.checkpoint'))
+        return self.paths.resolve(self.paths.tuple_key('gnn'))
 
     @property
     def signature_bank_path(self):
@@ -247,8 +242,7 @@ def resolve(template, dataset, backbone, overrides=()):
     if missing:
         raise ValueError(f'Unresolved configuration keys: {missing}')
     _validate(parameters)
-    return ResolvedConfig(dataset, backbone, parameters, dataset_config, tuple_config, ResourcePaths(template, dataset, backbone),
-                          bool(template['resources'].get('verify_checksums', True)))
+    return ResolvedConfig(dataset, backbone, parameters, dataset_config, tuple_config, ResourcePaths(template, dataset, backbone))
 
 
 def _validate_stage1(stage1):

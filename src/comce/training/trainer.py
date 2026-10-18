@@ -18,8 +18,7 @@ import torch.nn.functional as F
 
 from comce.datasets.oracle import ExactOracle
 from comce.pipeline.config import eligibility_reason
-from comce.pipeline.features import FEATURE_SCHEMA_FILE, check_feature_schema, evaluation_populations
-from comce.pipeline.io import sha256
+from comce.pipeline.features import evaluation_populations
 from comce.pipeline.models import bundle_payload
 from comce.pipeline.resources import load_explained_model
 from comce.stage1.signatures import SignatureBank
@@ -57,8 +56,7 @@ def training_targets(config):
                          f'{ {k: v for k, v in shared.items() if v} }; training stops')
     if spec.get('sampling_seed') is not None:
         ordered = [ordered[i] for i in np.random.default_rng(int(spec['sampling_seed'])).permutation(len(ordered))]
-    isolation = dict(population_path=spec['population_path'], population_sha256=sha256(population),
-                     sampling_seed=spec.get('sampling_seed'),
+    isolation = dict(population_path=spec['population_path'], sampling_seed=spec.get('sampling_seed'),
                      evaluation_populations={name: dict(ids=len(ids), shared_with_train=0) for name, ids in evaluation.items()})
     return ordered, isolation
 
@@ -259,11 +257,9 @@ class TupleTrainer:
         self.cache = RecordCache(self.work / 'records')
         self.bank_path = Path(signature_bank)
         self.bank = SignatureBank.load(self.bank_path)
-        self.feature_schema = check_feature_schema(config.stage1, self.bank_path, self.bank)['fitted']
         self.centers, self.isolation = training_targets(config)
         self.quota = target_quota(config, template, len(self.centers))
-        self.io, self.gnn = load_explained_model(config, allowed_ids={c: 'train' for c in self.centers}, device=device,
-                                                 explained_model_sha256=config.tuple_config['gnn']['sha256'])
+        self.io, self.gnn = load_explained_model(config, allowed_ids={c: 'train' for c in self.centers}, device=device)
         self.relations = list(config.dataset_config['relations'])
         self.domain_params = config.domain
         self.search = config.search
@@ -543,8 +539,6 @@ class TupleTrainer:
         if not bank_target.exists():
             bank_target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(self.bank_path, bank_target)
-            if self.bank_path.with_name(FEATURE_SCHEMA_FILE).is_file():
-                shutil.copy2(self.bank_path.with_name(FEATURE_SCHEMA_FILE), bank_target.with_name(FEATURE_SCHEMA_FILE))
         architecture = dict(set_transformer=self.selector_architecture, world_model=self.wm_shape,
                             ranking_residual=dict(edge_in=self.wm_shape['edge_in'], max_set_size=self.residual.max_set_size),
                             policy=self.policy_architecture)
@@ -556,11 +550,7 @@ class TupleTrainer:
                                adaptation_counts=self.adaptation_counts, timing_seconds=self.timing))
         payload = bundle_payload(dataset=self.dataset, backbone=self.backbone, set_transformer=self.selector,
                                  world_model=self.world_model, ranking_residual=self.residual, policy=self.policy,
-                                 architecture=architecture,
-                                 signature_bank=dict(path=f'signatures/{self.dataset}/signature_bank.pt', sha256=sha256(bank_target)),
-                                 explained_model_sha256=sha256(self.config.gnn_path),
-                                 input_schema=dict(relations=self.relations, feature_schema=self.feature_schema),
-                                 training=training)
+                                 architecture=architecture, input_schema=dict(relations=self.relations), training=training)
         target = models_root / self.dataset / self.backbone / 'comce.pt'
         target.parent.mkdir(parents=True, exist_ok=True)
         torch.save(payload, target)

@@ -77,7 +77,7 @@ def test_signature_context_is_validated_but_never_conditions_the_scores():
     other = SignatureContext(tuple(keys), np.array([9, 9]), one.edge_tokens, one.coordinate_spaces)
     a, b = RequestScorer(states, residual, sets, one), RequestScorer(states, residual, sets, other)
     np.testing.assert_array_equal(a.world_model_scores([('a',), ('b',)]), b.world_model_scores([('a',), ('b',)]))
-    assert one.statistics(keys)['identity'] != other.statistics(keys)['identity']
+    assert one.statistics(keys)['regions'] == 1 and other.statistics(keys)['regions'] == 0
     with pytest.raises(ValueError, match='unknown edge'):
         SignatureContext(('x', 'b'), one.center, one.edge_tokens, one.coordinate_spaces).validate(['a'])
     with pytest.raises(ValueError, match='alignment'):

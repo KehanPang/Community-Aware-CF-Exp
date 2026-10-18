@@ -6,13 +6,11 @@ import time
 import torch
 
 from comce.pipeline.config import eligibility_reason
-from comce.pipeline.io import sha256
 from comce.pipeline.models import load_models
 from comce.pipeline.resources import load_explained_model
 from comce.stage2.domain import select_domain
 from comce.stage2.regions import build_record
 from comce.stage2.set_transformer import selector_probabilities
-from comce.stage3.candidates import candidate_evidence, candidate_order
 from comce.stage3.certification import certify_candidates
 from comce.stage3.edit_cost import EdgeCost
 from comce.stage3.search import generate_candidates
@@ -54,13 +52,11 @@ class Explainer:
         config.paths.require(config.paths.inference_keys())
         self.config = config
         self.device = device or config.execution['device']
-        self.models = load_models(config.model_path, bank_path=config.signature_bank_path, device=self.device,
-                                  stage1=config.stage1)
+        self.models = load_models(config.model_path, bank_path=config.signature_bank_path, device=self.device)
         self.world_model_update = None if world_model_update is None else apply_update(
-            self.models, world_model_update, bundle_sha256=sha256(config.model_path), target_ids=allowed_ids)
+            self.models, world_model_update, target_ids=allowed_ids)
         check_architecture(self.models, config)
-        self.io, self.gnn = load_explained_model(config, allowed_ids=allowed_ids, device=self.device,
-                                                 explained_model_sha256=self.models.metadata['explained_model_sha256'])
+        self.io, self.gnn = load_explained_model(config, allowed_ids=allowed_ids, device=self.device)
         self.search = config.search
         self.domain_params = config.domain
         self.task = config.task
@@ -180,7 +176,6 @@ class Explainer:
                                         q_clean=self.search.cleanup_queries, kappa=self.search.lookahead,
                                         max_edges=self.search.explanation_budget, edit_cost=edit_cost,
                                         dedup_threshold=self.search.dedup_threshold)
-        result.update(candidate_evidence(pool, candidate_order(pool, edit_cost, self.search.dedup_threshold)))
         final_domain = search['domain']
         counted = session['counted']
         if counted.physical != result['total_queries']:
@@ -196,8 +191,7 @@ class Explainer:
                'community_count': len(record['communities']), 'true_e123': int(record['u123_size']),
                'selection_trace': selection, 'attempts': result['attempts'], 'cleanup_attempts': result['cleanup_attempts'],
                'events': session['events'], 'actual_blackbox_forwards': counted.physical,
-               'candidate_set_sha256': result['candidate_set_sha256'], 'candidate_score_sha256': result['candidate_score_sha256'],
-               'candidate_schedule_sha256': result['candidate_schedule_sha256'], 'candidate_schedule_count': result['schedule_count'],
+               'candidate_schedule_count': result['schedule_count'],
                'decision_params': self.decision_params(),
                'failure_reason': None if result['success'] else 'NO_CERTIFICATE_FOUND_WITHIN_PROTOCOL',
                'task_contract': self.task_contract(), 'query_ledger': result['query_ledger'],

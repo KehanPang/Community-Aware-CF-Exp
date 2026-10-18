@@ -1,7 +1,5 @@
 """Typed-graph adapter: node features per type and typed edge arrays; M runs on the incoming typed subgraph."""
 from collections import Counter
-import hashlib
-import json
 from pathlib import Path
 
 import numpy as np
@@ -148,11 +146,10 @@ class TypedReceptiveField:
 
 
 class TypedGraphIO:
-    def __init__(self, resources, options, *, device, allowed_ids, identity):
+    def __init__(self, resources, options, *, device, allowed_ids):
         self.device = device
         self.options = options
         self.allowed_ids = {str(c): str(s) for c, s in allowed_ids.items()}
-        self.identity = identity
         self.target_type = options['target_type']
         raw = torch.load(Path(resources['data']) / options['graph'], weights_only=True)
         self.features = raw['features']
@@ -190,18 +187,12 @@ class TypedGraphIO:
                            torch.tensor([local['center_index']]))
         if keys != set(columns):
             raise ValueError('Canonical legal unit without all message columns')
-        identity = dict(nodes={t: a.tolist() for t, a in local['nodes'].items()},
-                        columns={str(r): v.tolist() for r, v in local['columns'].items()})
-        h = hashlib.sha256(json.dumps(dict(data=self.identity, center=center, split=split, context=identity), sort_keys=True).encode())
-        for name, value in sorted(batch.x.items()):
-            h.update(name.encode()); h.update(str((value.dtype, tuple(value.shape))).encode())
-            h.update(value.detach().cpu().contiguous().reshape(-1).view(torch.uint8).numpy().tobytes())
-        self.current = CertificationContext(batch.to(self.device), center, h.hexdigest(),
-                                            CanonicalEdgeDomain(tuple(sorted(keys))), {k: tuple(v) for k, v in columns.items()})
+        self.current = CertificationContext(batch.to(self.device), center, CanonicalEdgeDomain(tuple(sorted(keys))),
+                                            {k: tuple(v) for k, v in columns.items()})
         return self.current
 
     def accept_observation(self, observation):
-        if observation.context_fingerprint != self.current.graph_fingerprint or observation.deleted:
+        if observation.deleted:
             raise ValueError('Only this request original observation supplies Region inputs')
         self.observation = observation
         self.q0 = observation.response()

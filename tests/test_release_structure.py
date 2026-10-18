@@ -35,18 +35,18 @@ def test_public_configuration_leaves_every_resource_path_empty():
     locations = [('resources', 'root'), ('outputs', 'root')]
     for name, dataset in template['datasets'].items():
         resources = dataset['resources']
-        locations += [('datasets', name, 'resources', key) for key in resources if key not in ('populations', 'files')]
+        locations += [('datasets', name, 'resources', key) for key in resources if key != 'populations']
         locations += [('datasets', name, 'resources', 'populations', key) for key in resources['populations']]
         locations.append(('datasets', name, 'training', 'population_path'))
         for backbone in template['tuples'][name]:
-            locations += [('tuples', name, backbone, 'model'), ('tuples', name, backbone, 'gnn', 'checkpoint')]
+            locations += [('tuples', name, backbone, 'model'), ('tuples', name, backbone, 'gnn')]
     for location in locations:
         value = template
         for part in location:
             value = value[part]
         assert value == '', '.'.join(location)
     assert {key for d in template['datasets'].values() for key in d['resources']} == {
-        'data', 'signature_bank', 'populations', 'files', 'train_centers'}
+        'data', 'signature_bank', 'populations', 'train_centers'}
 
 
 def test_core_stages_name_no_dataset_or_backbone():

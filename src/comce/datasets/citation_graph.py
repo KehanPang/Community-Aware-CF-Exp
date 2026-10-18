@@ -1,6 +1,4 @@
 """Citation-graph adapter: papers cite papers and are written by authors; M runs on the 3-hop citation context."""
-import hashlib
-import json
 from pathlib import Path
 
 import numpy as np
@@ -66,11 +64,10 @@ class CitationGraph:
 
 
 class CitationGraphIO:
-    def __init__(self, resources, options, *, device, allowed_ids, identity):
+    def __init__(self, resources, options, *, device, allowed_ids):
         self.device = device
         self.allowed_ids = {str(c): str(s) for c, s in allowed_ids.items()}
         self.graph = CitationGraph(Path(resources['data']), options)
-        self.identity = identity
         self.relations = None
         self.observation = None
 
@@ -100,18 +97,12 @@ class CitationGraphIO:
         keys = set(self.context['edge_keys'])
         if keys != set(columns):
             raise ValueError('Canonical legal unit without all message columns')
-        identity = dict(papers=self.context['paper_indices'].tolist(), authors=self.context['author_indices'].tolist(),
-                        keys=self.context['edge_keys'])
-        h = hashlib.sha256(json.dumps(dict(data=self.identity, center=center, split=split, context=identity), sort_keys=True).encode())
-        for name, value in sorted(batch.x.items()):
-            h.update(name.encode()); h.update(str((value.dtype, tuple(value.shape))).encode())
-            h.update(value.detach().cpu().contiguous().reshape(-1).view(torch.uint8).numpy().tobytes())
-        self.current = CertificationContext(batch.to(self.device), center, h.hexdigest(),
-                                            CanonicalEdgeDomain(tuple(sorted(keys))), {k: tuple(v) for k, v in columns.items()})
+        self.current = CertificationContext(batch.to(self.device), center, CanonicalEdgeDomain(tuple(sorted(keys))),
+                                            {k: tuple(v) for k, v in columns.items()})
         return self.current
 
     def accept_observation(self, observation):
-        if observation.context_fingerprint != self.current.graph_fingerprint or observation.deleted:
+        if observation.deleted:
             raise ValueError('Only this request original observation supplies Region inputs')
         self.observation = observation
         self.q0 = observation.response()

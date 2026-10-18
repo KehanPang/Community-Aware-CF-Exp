@@ -40,7 +40,7 @@ def toy_paths(tmp_path, **resources):
 def test_inference_names_every_empty_key_before_loading(dataset, backbone, tmp_path, nothing_is_loaded):
     config = resolve(TEMPLATE, dataset, backbone)
     expected = [f'datasets.{dataset}.resources.data', f'datasets.{dataset}.resources.signature_bank',
-                f'tuples.{dataset}.{backbone}.gnn.checkpoint', f'tuples.{dataset}.{backbone}.model']
+                f'tuples.{dataset}.{backbone}.gnn', f'tuples.{dataset}.{backbone}.model']
     with pytest.raises(ResourceConfigurationError) as error:
         Explainer(config, allowed_ids={'0': 'val'}, device='cpu')
     assert error.value.keys == expected and all(key in str(error.value) for key in expected)
@@ -101,7 +101,7 @@ def test_help_needs_no_resources(script, tmp_path):
 
 @pytest.mark.parametrize('script,arguments,keys', [
     ('run_comce', ['--dataset', 'claim', '--backbone', 'gcn', '--target-id', '1'],
-     ['tuples.claim.gcn.model', 'tuples.claim.gcn.gnn.checkpoint', 'datasets.claim.resources.data',
+     ['tuples.claim.gcn.model', 'tuples.claim.gcn.gnn', 'datasets.claim.resources.data',
       'datasets.claim.resources.signature_bank', 'outputs.root']),
     ('run_comce', ['--dataset', 'goodreads', '--backbone', 'hgt', '--population-name', 'dev'],
      ['datasets.goodreads.resources.populations.dev', 'outputs.root']),
@@ -109,7 +109,7 @@ def test_help_needs_no_resources(script, tmp_path):
      ['datasets.claim.resources.data', 'datasets.claim.resources.populations.test1000', 'outputs.root']),
     ('fit_signatures', ['--dataset', 'goodreads', '--output', 'bank.pt'], ['datasets.goodreads.resources.train_centers']),
     ('train_comce', ['--dataset', 'computer', '--backbone', 'hgt', '--models-root', 'models', '--work', 'work'],
-     ['tuples.computer.hgt.gnn.checkpoint', 'datasets.computer.training.population_path',
+     ['tuples.computer.hgt.gnn', 'datasets.computer.training.population_path',
       'datasets.computer.resources.signature_bank']),
     ('update_world_model', ['--dataset', 'claim', '--backbone', 'hgt', '--certification-log', 'log', '--output', 'update.pt'],
      ['tuples.claim.hgt.model', 'datasets.claim.resources.populations.dev_full', 'datasets.claim.training.population_path']),

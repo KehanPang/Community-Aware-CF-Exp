@@ -1,6 +1,4 @@
 from dataclasses import dataclass, field
-import hashlib
-import json
 from pathlib import Path
 
 import numpy as np
@@ -92,16 +90,7 @@ class SignatureContext:
 
     def statistics(self, requested_keys):
         self.validate(requested_keys)
-        digest = hashlib.sha256()
-        digest.update(json.dumps(dict(edges=self.edge_keys, spaces=self.coordinate_spaces,
-                                      regions=self.region_members, base_spaces=self.base_coordinate_spaces,
-                                      representations=self.representations), sort_keys=True).encode())
-        for name, values in [('center', self.center), ('edge_tokens', self.edge_tokens), *sorted(self.base_signatures.items())]:
-            array = np.ascontiguousarray(values)
-            digest.update(name.encode())
-            digest.update(str((array.dtype.str, array.shape)).encode())
-            digest.update(array.tobytes())
-        return dict(identity=digest.hexdigest(), coordinate_spaces=dict(self.coordinate_spaces),
+        return dict(coordinate_spaces=dict(self.coordinate_spaces),
                     center_shape=list(np.shape(self.center)), edge_token_shape=list(np.shape(self.edge_tokens)),
                     regions=len(self.region_members), base_coordinate_spaces=dict(self.base_coordinate_spaces),
                     representations=dict(self.representations))

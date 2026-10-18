@@ -21,12 +21,11 @@ def test_configuration_declares_nine_tuples():
 
 
 @pytest.mark.parametrize('dataset,backbone', TUPLES)
-def test_bundle_strict_load_architecture_and_bindings(dataset, backbone, resource_template):
+def test_bundle_strict_load_and_architecture(dataset, backbone, resource_template):
     config = resolve(resource_template, dataset, backbone)
     models = load_models(config.model_path, bank_path=config.signature_bank_path, device='cpu')
     meta = models.metadata
     assert meta['format'] == BUNDLE_FORMAT and (meta['dataset'], meta['backbone']) == (dataset, backbone)
-    assert meta['explained_model_sha256'] == config.tuple_config['gnn']['sha256']
     assert {type(models.world_model[s]) for s in STATES} == {WorldModel}
     architecture = meta['architecture']['set_transformer']
     stage2 = config.parameters['stage2']
@@ -67,12 +66,3 @@ def test_quantize_counts_the_thresholds_below_each_coordinate():
     np.testing.assert_allclose(np.linalg.norm(directions, axis=0), 1.0)
     np.testing.assert_array_equal(directions, signatures.random_directions(16, 20261017))
 
-
-def test_resource_pins_name_files_inside_the_data_directory():
-    for dataset, spec in TEMPLATE['datasets'].items():
-        pins = spec['resources']['files']
-        assert pins and all(len(digest) == 64 for digest in pins.values())
-        assert all(Path(name).name == name for name in pins)
-        for backbone, tuple_config in TEMPLATE['tuples'][dataset].items():
-            assert len(tuple_config['gnn']['sha256']) == 64
-    assert TEMPLATE['resources']['verify_checksums'] is True

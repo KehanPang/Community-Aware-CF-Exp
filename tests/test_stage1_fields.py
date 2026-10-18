@@ -1,4 +1,3 @@
-import json
 import os
 import subprocess
 import sys
@@ -10,13 +9,11 @@ import pytest
 import yaml
 
 from comce.datasets.schema import GraphSchema
-from comce.pipeline.config import load_template, resolve, resolve_stage1
-from comce.pipeline.features import FEATURE_SCHEMA_FILE, check_feature_schema, stage1_plan
-from comce.pipeline.models import load_models
-from comce.stage1 import fields
+from comce.pipeline.config import load_template, resolve_stage1
+from comce.pipeline.features import stage1_plan
 from comce.stage1.encoders import fit_signature_bank, lsh_representation
 from comce.stage1.fields import FieldSource, Stage1ConfigurationError, validate
-from comce.stage1.signatures import SignatureBank, project_rows, quantile_thresholds, random_directions
+from comce.stage1.signatures import project_rows, quantile_thresholds, random_directions
 
 ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE = load_template(ROOT / 'yaml.template')
@@ -38,8 +35,7 @@ def toy(tmp_path):
 
 LSH = dict(name='vectors', source=dict(file='item_vectors.npy'), encoder='lsh', input_kind='numeric_vector',
            standardize='train', output_dimension=8, seed=3)
-TAGS = dict(name='embedding', source=dict(file='tag_embeddings.npy'), encoder='precomputed', output_dimension=8,
-            description='synthetic 8-d tag vectors')
+TAGS = dict(name='embedding', source=dict(file='tag_embeddings.npy'), encoder='precomputed', output_dimension=8)
 
 
 def declaration(node_types, dimension=8, reducer=None):
@@ -83,8 +79,7 @@ def test_lsh_projects_train_standardized_numeric_fields_and_buckets_use_train_no
     np.testing.assert_allclose(lsh_representation(values, LSH, {0, 1, 2, 3}), standardized @ weight)
     pooled = np.concatenate([bank.coordinates['item'][:4], bank.coordinates['tag']]).astype(np.float64)
     np.testing.assert_array_equal(bank.thresholds, quantile_thresholds(pooled, 16))
-    assert bank.provenance['feature_schema']['fingerprint'] == plan.fingerprint
-    assert bank.provenance['fields']['tag'][0]['description'] == TAGS['description']
+    assert bank.provenance['feature_schema'] == plan.feature_schema and bank.provenance['fields']['tag'] == [TAGS]
     shifted = values.copy()
     shifted[4:] += 100.0
     np.save(sources.root / 'item_vectors.npy', shifted)
@@ -108,12 +103,11 @@ def test_illegal_field_declarations_fail_explicitly(tmp_path, field, message):
         check(declaration({'item': dict(fields=[field]), 'tag': dict(fields=[TAGS])}), schema, sources)
 
 
-def test_precomputed_embeddings_need_a_matching_width_and_a_stated_origin(tmp_path):
+def test_precomputed_embeddings_need_a_matching_width(tmp_path):
     schema, sources = toy(tmp_path)
     item = dict(TAGS, source=dict(file='item_vectors.npy'), output_dimension=5)
     for tag, message in ((dict(TAGS, output_dimension=16), 'has 8 dimensions, output_dimension says 16'),
-                         (dict(TAGS, description=' '), 'describe where the precomputed embedding comes from'),
-                         ({k: v for k, v in TAGS.items() if k != 'description'}, r"missing \['description'\]"),
+                         ({k: v for k, v in TAGS.items() if k != 'output_dimension'}, r"missing \['output_dimension'\]"),
                          (dict(TAGS, model='bge'), r"unknown \['model'\]")):
         with pytest.raises(Stage1ConfigurationError, match=message):
             check(declaration({'item': dict(fields=[LSH]), 'tag': dict(fields=[tag])}), schema, sources)
@@ -164,24 +158,12 @@ def test_sbert_encodes_text_fields_with_a_local_model_and_checks_its_dimension(t
     weight = np.random.default_rng(2).normal(size=(384, 8)) / np.sqrt(8)
     np.testing.assert_allclose(bank.coordinates['item'], project_rows(project_rows(encoded, weight), random_directions(8, 7)),
                                rtol=1e-4, atol=1e-4)
-    assert len(bank.provenance['fields']['item'][0]['model_sha256']) == 64
     for field, message in ((dict(text, output_dimension=768), 'outputs 384 dimensions, output_dimension says 768'),
                            (dict(text, model=str(tmp_path / 'no_such_model')), 'not available locally'),
                            (dict(text, source=dict(file='items.parquet', column='price')), 'numeric fields use lsh')):
         with pytest.raises(Stage1ConfigurationError, match=message):
             check(declaration({'item': dict(fields=[field]), 'tag': dict(fields=[TAGS])}, reducer={'method': 'random_projection', 'seed': 2}),
                   schema, sources)
-
-
-def test_feature_schema_fingerprint_ignores_documentation_only():
-    stage1 = declaration({'item': dict(fields=[LSH]), 'tag': dict(fields=[TAGS])})
-    base = fields.fingerprint(fields.feature_schema(stage1))
-    described = declaration({'item': dict(fields=[LSH]), 'tag': dict(fields=[dict(TAGS, description='other words')])})
-    assert fields.fingerprint(fields.feature_schema(described)) == base
-    for changed in (declaration({'item': dict(fields=[dict(LSH, seed=4)]), 'tag': dict(fields=[TAGS])}),
-                    declaration({'item': dict(fields=[dict(LSH, standardize='none')]), 'tag': dict(fields=[TAGS])}),
-                    dict(stage1, projection_seed=8), dict(stage1, representation_dimension=16)):
-        assert fields.fingerprint(fields.feature_schema(changed)) != base
 
 
 def test_train_seed_overlap_with_evaluation_targets_is_reported(tmp_path):
@@ -237,44 +219,6 @@ def test_without_template_output_or_outputs_root_the_stage1_template_goes_to_a_n
     written = list(temporary.glob('comce-stage1-*/goodreads.stage1.yaml'))
     assert len(written) == 1 and str(written[0]) in result.stderr
     assert sorted(p.name for p in tmp_path.iterdir()) == ['config.yaml', 'tmp']
-
-
-@pytest.mark.parametrize('dataset', ['claim', 'computer', 'goodreads'])
-def test_published_banks_record_the_declared_feature_schema(dataset, resource_template):
-    stage1, paths = resolve_stage1(resource_template, dataset)
-    path = paths.resource('signature_bank')
-    sidecar = json.loads((path.parent / FEATURE_SCHEMA_FILE).read_text())
-    assert sidecar['stage1'] == fields.feature_schema(stage1)
-    assert check_feature_schema(stage1, path, SignatureBank.load(path)) == dict(declared=True, fitted=sidecar['fingerprint'])
-
-
-def test_models_refuse_a_changed_field_declaration_but_never_require_one(resource_template):
-    config = resolve(resource_template, 'goodreads', 'gcn')
-    bank = config.signature_bank_path
-    load_models(config.model_path, bank_path=bank, device='cpu')
-    load_models(config.model_path, bank_path=bank, device='cpu', stage1=dict(config.stage1, node_types=None))
-    described = json.loads(json.dumps(config.stage1))
-    described['node_types']['book']['fields'][0]['description'] = 'reworded'
-    load_models(config.model_path, bank_path=bank, device='cpu', stage1=described)
-    changed = json.loads(json.dumps(config.stage1))
-    changed['node_types']['book']['fields'][0]['source'] = {'file': 'review_features.npy'}
-    with pytest.raises(Stage1ConfigurationError, match='refit the signature bank'):
-        load_models(config.model_path, bank_path=bank, device='cpu', stage1=changed)
-    with pytest.raises(Stage1ConfigurationError, match='retrain the model bundles'):
-        load_models(config.model_path, bank_path=bank, device='cpu', stage1=dict(config.stage1, representation_dimension=64))
-
-
-def test_a_sidecar_must_name_its_bank(tmp_path, resource_template):
-    source = resolve_stage1(resource_template, 'goodreads')[1].resource('signature_bank').parent
-    bank, sidecar = tmp_path / 'signature_bank.pt', tmp_path / FEATURE_SCHEMA_FILE
-    bank.write_bytes((source / 'signature_bank.pt').read_bytes())
-    value = json.loads((source / FEATURE_SCHEMA_FILE).read_text())
-    sidecar.write_text(json.dumps(dict(value, signature_bank_sha256='0' * 64)))
-    with pytest.raises(ValueError, match='does not describe'):
-        check_feature_schema({}, bank, SignatureBank.load(bank))
-    sidecar.write_text(json.dumps(dict(value, fingerprint='0' * 64)))
-    with pytest.raises(ValueError, match='fingerprint does not match'):
-        check_feature_schema({}, bank, SignatureBank.load(bank))
 
 
 def test_declared_dimensions_keep_the_768_contract_and_the_paper_record():

@@ -14,7 +14,7 @@ import torch
 
 from comce.pipeline.config import ResourceConfigurationError, load_template, resolve
 from comce.pipeline.features import outside_release
-from comce.pipeline.io import atomic_json, sha256
+from comce.pipeline.io import atomic_json
 from comce.pipeline.models import load_models
 from comce.training.world_model_update import (UPDATE_FORMAT, _tensors, certification_labels, fit_update, rebuild_examples,
                                                split_by_target)
@@ -42,9 +42,8 @@ def main():
     if output.exists() or report.exists():
         parser.error(f'{output} or {report} exists; write the update to a new location')
     settings = template['training']['world_model_update']
-    bundle_sha256 = sha256(config.model_path)
-    models = load_models(config.model_path, bank_path=config.signature_bank_path, device=args.device, stage1=config.stage1)
-    labeled, logs, isolation = certification_labels(config, models, args.certification_log, bundle_sha256=bundle_sha256)
+    models = load_models(config.model_path, bank_path=config.signature_bank_path, device=args.device)
+    labeled, logs, isolation = certification_labels(config, args.certification_log)
     if not labeled:
         raise SystemExit('the certification logs hold no real-GNN labels of TRAIN targets')
     items, score_gap = rebuild_examples(config, models, labeled, device=args.device)
@@ -61,11 +60,9 @@ def main():
     supervision = dict(fit_targets=sorted(i['center'] for i in fit_items),
                        validation_targets=sorted(i['center'] for i in validation_items))
     output.parent.mkdir(parents=True, exist_ok=True)
-    torch.save(dict(format=UPDATE_FORMAT, state='omega', gate=gate, delta=delta, base_bundle_sha256=bundle_sha256,
-                    dataset=config.dataset, backbone=config.backbone, settings=dict(settings), supervision=supervision,
-                    certification_logs=logs), output)
-    summary = dict(format=UPDATE_FORMAT, update=str(output), update_sha256=sha256(output), dataset=config.dataset,
-                   backbone=config.backbone, base_bundle_sha256=bundle_sha256, state='omega', gate=gate,
+    torch.save(dict(format=UPDATE_FORMAT, state='omega', gate=gate, delta=delta, dataset=config.dataset,
+                    backbone=config.backbone, settings=dict(settings), supervision=supervision, certification_logs=logs), output)
+    summary = dict(format=UPDATE_FORMAT, update=str(output), dataset=config.dataset, backbone=config.backbone, state='omega', gate=gate,
                    accepted=bool(gate), delta_norm=float(sum((d ** 2).sum() for d in delta.values()) ** 0.5),
                    settings=dict(settings), certification_logs=logs, train_population=isolation,
                    label_source='journaled real-GNN certification and cleanup forwards of TRAIN targets',

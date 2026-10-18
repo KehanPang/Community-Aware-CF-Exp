@@ -1,28 +1,14 @@
-import hashlib
 import json
 import os
 import time
 from pathlib import Path
 from typing import Any
 
-PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-
-
-def sha256(path):
-    h = hashlib.sha256()
-    with Path(path).open('rb') as stream:
-        for block in iter(lambda: stream.read(8 << 20), b''):
-            h.update(block)
-    return h.hexdigest()
 
 
 def canonical_json(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(',', ':'), ensure_ascii=False, allow_nan=False, default=str)
-
-
-def digest(value: Any) -> str:
-    return hashlib.sha256(canonical_json(value).encode()).hexdigest()
 
 
 def atomic_json(path: Path, value: Any) -> None:

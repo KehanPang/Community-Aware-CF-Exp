@@ -5,8 +5,6 @@ from pathlib import Path
 import torch
 from torch import nn
 
-from comce.pipeline.features import check_feature_schema
-from comce.pipeline.io import sha256
 from comce.stage1.signatures import SignatureBank
 from comce.stage2.set_transformer import SetTransformer
 from comce.stage3.policy import Policy
@@ -28,9 +26,8 @@ class ComCEModels:
 
 
 def bundle_payload(*, dataset, backbone, set_transformer, world_model, ranking_residual, policy, architecture,
-                   signature_bank, explained_model_sha256, input_schema, training):
-    return dict(format=BUNDLE_FORMAT, dataset=dataset, backbone=backbone, architecture=architecture,
-                signature_bank=signature_bank, explained_model_sha256=explained_model_sha256, input_schema=input_schema,
+                   input_schema, training):
+    return dict(format=BUNDLE_FORMAT, dataset=dataset, backbone=backbone, architecture=architecture, input_schema=input_schema,
                 set_transformer={k: v.detach().cpu() for k, v in set_transformer.state_dict().items()},
                 world_model={state: {k: v.detach().cpu() for k, v in world_model[state].state_dict().items()} for state in STATES},
                 ranking_residual={k: v.detach().cpu() for k, v in ranking_residual.state_dict().items()},
@@ -38,9 +35,8 @@ def bundle_payload(*, dataset, backbone, set_transformer, world_model, ranking_r
                 training=training)
 
 
-def load_models(path, *, bank_path, device, stage1=None):
-    """Strict load of one bundle and the signature bank it is bound to by SHA256; stage1 (a resolved Stage 1 declaration)
-    must describe the bank."""
+def load_models(path, *, bank_path, device):
+    """Strict load of one bundle and its signature bank."""
     path, bank_path = Path(path), Path(bank_path)
     payload = torch.load(path, map_location='cpu', weights_only=True)
     if payload.get('format') != BUNDLE_FORMAT:
@@ -55,15 +51,9 @@ def load_models(path, *, bank_path, device, stage1=None):
     ranking_residual.load_state_dict(payload['ranking_residual'], strict=True)
     policy = Policy(**architecture['policy'])
     policy.load_state_dict(payload['policy'], strict=True)
-    # The bank is part of the bundle's input contract, so its binding is checked whatever resources.verify_checksums says.
-    if sha256(bank_path) != payload['signature_bank']['sha256']:
-        raise ValueError(f'Signature bank digest mismatch: {bank_path}')
     bank = SignatureBank.load(bank_path)
-    feature_schema = check_feature_schema(stage1 or {}, bank_path, bank,
-                                          bundle_record=payload.get('input_schema', {}).get('feature_schema'))
     modules = [set_transformer, world_model, ranking_residual, policy]
     for module in modules:
         module.to(device).eval().requires_grad_(False)
     metadata = {k: v for k, v in payload.items() if k not in ('set_transformer', 'world_model', 'ranking_residual', 'policy')}
-    metadata['stage1_feature_schema'] = feature_schema
     return ComCEModels(set_transformer, world_model, ranking_residual, policy, bank, metadata, path)

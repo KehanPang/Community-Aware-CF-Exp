@@ -41,8 +41,7 @@ def main():
                   f'{name!r} (feature values only; recorded in the bank provenance)', file=sys.stderr)
     bank = fit_signature_bank(plan)
     bank.save(output)
-    print(args.dataset, {t: v.shape for t, v in bank.coordinates.items()}, bank.provenance['train_nodes'],
-          'feature schema', plan.fingerprint, '->', output)
+    print(args.dataset, {t: v.shape for t, v in bank.coordinates.items()}, bank.provenance['train_nodes'], '->', output)
 
 
 if __name__ == '__main__':

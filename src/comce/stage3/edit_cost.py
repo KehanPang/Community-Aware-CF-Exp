@@ -65,10 +65,7 @@ class BoundEdgeCost:
         return value
 
     def payload(self):
-        import hashlib
-        import json
-        digest = hashlib.sha256(json.dumps(self.values, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
-        return dict(mode=self.mode, identity=self.identity, legal_edge_weights_sha256=digest,
+        return dict(mode=self.mode, identity=self.identity,
                     optimization='minimum_edit_cost_among_exact_certificates',
                     candidate_priority='descending_S_then_edit_cost',
                     cleanup_priority='ascending_singleton_S',

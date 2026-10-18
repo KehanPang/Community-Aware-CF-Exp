@@ -19,7 +19,7 @@ os.environ.setdefault('MKL_NUM_THREADS', '1')
 import torch
 
 from comce.pipeline.explainer import Explainer
-from comce.pipeline.io import PACKAGE_ROOT, append_jsonl, atomic_json, canonical_json, digest, read_jsonl_strict, sha256
+from comce.pipeline.io import append_jsonl, atomic_json, canonical_json, read_jsonl_strict
 
 
 class AppendJournal:
@@ -47,7 +47,6 @@ class PhysicalEventSink:
 
     def __init__(self, result_dir: Path):
         self.journal = AppendJournal(result_dir / 'PHYSICAL_EVENTS.jsonl')
-        self.run_id = 'UNBOUND'
         self.request_id = 'UNBOUND'
         self.attempt_id = 0
         self.call_index = 0
@@ -61,8 +60,8 @@ class PhysicalEventSink:
 
     def intent(self, value: dict[str, Any]) -> str:
         self.call_index += 1
-        event_id = f'{self.run_id}:{self.request_id}:{self.attempt_id}:{self.call_index}'
-        self.io_wall += self.journal.append({'event': 'INTENT', 'physical_event_id': event_id, 'run_id': self.run_id,
+        event_id = f'{self.request_id}:{self.attempt_id}:{self.call_index}'
+        self.io_wall += self.journal.append({'event': 'INTENT', 'physical_event_id': event_id,
                                              'request_id': self.request_id, 'attempt_id': self.attempt_id,
                                              'call_index': self.call_index, 'time_ns': time.time_ns(), **value})
         self.pending.add(event_id)
@@ -74,7 +73,7 @@ class PhysicalEventSink:
         wall = float(value['wall_s'])
         if not math.isfinite(wall) or wall < 0:
             raise RuntimeError('invalid oracle wall time')
-        self.io_wall += self.journal.append({'event': 'COMPLETE', 'physical_event_id': event_id, 'run_id': self.run_id,
+        self.io_wall += self.journal.append({'event': 'COMPLETE', 'physical_event_id': event_id,
                                              'request_id': self.request_id, 'attempt_id': self.attempt_id,
                                              'time_ns': time.time_ns(), **value})
         self.oracle_walls.append(wall)
@@ -112,15 +111,8 @@ def runtime_environment(execution):
         torch.backends.cudnn.allow_tf32 = previous['cudnn_tf32']
 
 
-def source_digest():
-    files = sorted(p for p in PACKAGE_ROOT.rglob('*') if p.is_file() and p.suffix in {'.py', '.yaml'})
-    return digest([[str(p.relative_to(PACKAGE_ROOT)), sha256(p)] for p in files])
-
-
-def population_binding(ids: Iterable[str], *, split: str, source: str, selection_rule: str) -> dict[str, Any]:
-    payload = {'ordered_ids': list(map(str, ids)), 'split': split, 'selection_rule': selection_rule, 'source': source}
-    payload['population_id'] = digest(payload)
-    return payload
+def population_record(ids: Iterable[str], *, split: str, source: str, selection_rule: str) -> dict[str, Any]:
+    return {'ordered_ids': list(map(str, ids)), 'split': split, 'selection_rule': selection_rule, 'source': source}
 
 
 def resource_state() -> dict[str, Any]:
@@ -156,7 +148,7 @@ def run_population(config, *, ids, split, result_dir, role='adhoc', population_s
     ordered_ids = list(map(str, ids))
     if len(ordered_ids) != len(set(ordered_ids)):
         raise ValueError('population contains duplicate centers')
-    population = population_binding(ordered_ids, split=split, source=str(population_source), selection_rule=selection_rule)
+    population = population_record(ordered_ids, split=split, source=str(population_source), selection_rule=selection_rule)
     sink = PhysicalEventSink(result_dir)
     explainer = journal = commits = None
     init_started = time.perf_counter()
@@ -173,14 +165,9 @@ def run_population(config, *, ids, split, result_dir, role='adhoc', population_s
                               world_model_update=world_model_update)
         init_wall = time.perf_counter() - init_started
         contract = dict(schema='comce-run-contract', dataset=config.dataset, backbone=config.backbone, role=role,
-                        configuration=config.payload(), model_bundle_sha256=sha256(explainer.models.path),
-                        signature_bank_sha256=explainer.models.metadata['signature_bank']['sha256'],
-                        explained_model_sha256=explainer.models.metadata['explained_model_sha256'],
-                        source_sha256=source_digest(), population=population)
+                        configuration=config.payload(), population=population)
         if explainer.world_model_update is not None:
             contract['world_model_update'] = explainer.world_model_update
-        contract['run_contract_id'] = digest(contract)
-        sink.run_id = contract['run_contract_id']
         contract_path = result_dir / 'CONTRACT.json'
         if contract_path.exists():
             if json.loads(contract_path.read_text()) != json.loads(canonical_json(contract)):
@@ -199,7 +186,7 @@ def run_population(config, *, ids, split, result_dir, role='adhoc', population_s
         complete_path = result_dir / 'COMPLETE.json'
         if complete_path.exists():
             complete = json.loads(complete_path.read_text())
-            if len(rows) != len(ordered_ids) or complete.get('run_contract_id') != contract['run_contract_id']:
+            if len(rows) != len(ordered_ids):
                 raise RuntimeError('invalid completed marker')
             return complete
         active = result_dir / 'CURRENT_REQUEST.json'
@@ -217,8 +204,8 @@ def run_population(config, *, ids, split, result_dir, role='adhoc', population_s
             for index, center in enumerate(ordered_ids[len(rows):], start=len(rows)):
                 request_id = f'{index}:{center}'
                 attempt_id = attempt_counts.get(request_id, 0) + 1
-                intent = {'run_contract_id': contract['run_contract_id'], 'request_id': request_id, 'attempt_id': attempt_id,
-                          'center_id': center, 'population_index': index, 'status': 'IN_PROGRESS', 'time_ns': time.time_ns()}
+                intent = {'request_id': request_id, 'attempt_id': attempt_id, 'center_id': center, 'population_index': index,
+                          'status': 'IN_PROGRESS', 'time_ns': time.time_ns()}
                 intent_io = time.perf_counter()
                 atomic_json(active, intent)
                 intent_io = time.perf_counter() - intent_io
@@ -226,8 +213,7 @@ def run_population(config, *, ids, split, result_dir, role='adhoc', population_s
                 if torch.cuda.is_available():
                     torch.cuda.synchronize()
                 request_started = time.perf_counter()
-                row = explainer.request(center, split=split, request_identity={
-                    'run_contract_id': contract['run_contract_id'], 'request_id': request_id, 'attempt_id': attempt_id})
+                row = explainer.request(center, split=split, request_identity={'request_id': request_id, 'attempt_id': attempt_id})
                 if torch.cuda.is_available():
                     torch.cuda.synchronize()
                 precommit_wall = time.perf_counter() - request_started
@@ -238,7 +224,7 @@ def run_population(config, *, ids, split, result_dir, role='adhoc', population_s
                     raise RuntimeError('physical sink/oracle count mismatch')
                 cost, sparsity = _cost_and_sparsity(row)
                 row.update(dataset=config.dataset, backbone=config.backbone, role=role, population_index=index,
-                           request_id=request_id, attempt_id=attempt_id, run_contract_id=contract['run_contract_id'],
+                           request_id=request_id, attempt_id=attempt_id,
                            population_deleted_cost=cost, population_deleted_edge_count=cost,
                            population_deleted_cost_unit='edge_count', population_sparsity_legal=sparsity,
                            scientific_status='COMPLETE' if row['task_eligible'] else 'TASK_INELIGIBLE',
@@ -247,18 +233,17 @@ def run_population(config, *, ids, split, result_dir, role='adhoc', population_s
                 if explainer.world_model_update is not None:
                     row['world_model_update'] = explainer.world_model_update
                 row_io = journal.append(row)
-                commits.append({'run_contract_id': contract['run_contract_id'], 'request_id': request_id,
-                                'attempt_id': attempt_id, 'center_id': center, 'population_index': index,
+                commits.append({'request_id': request_id, 'attempt_id': attempt_id, 'center_id': center, 'population_index': index,
                                 'request_wall': time.perf_counter() - request_started, 'request_row_io_wall': row_io,
                                 'request_intent_io_wall': intent_io, 'status': 'COMMITTED', 'time_ns': time.time_ns()})
                 active.unlink(missing_ok=True)
                 rows.append(row)
                 if index < 2 or (index + 1) % 8 == 0 or index + 1 == len(ordered_ids):
                     atomic_json(result_dir / 'HEARTBEAT.json', {
-                        'run_contract_id': contract['run_contract_id'], 'completed': index + 1, 'total': len(ordered_ids),
+                        'completed': index + 1, 'total': len(ordered_ids),
                         'dataset': config.dataset, 'backbone': config.backbone, 'role': role, 'resources': resource_state(),
                         'time_ns': time.time_ns()})
-        complete = {'schema': 'comce-run-complete', 'run_contract_id': contract['run_contract_id'], 'n': len(rows),
+        complete = {'schema': 'comce-run-complete', 'n': len(rows),
                     'target': len(ordered_ids), 'init_wall': init_wall, 'resources': resource_state(),
                     'completed_time_ns': time.time_ns()}
         atomic_json(complete_path, complete)

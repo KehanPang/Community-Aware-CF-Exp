@@ -17,7 +17,7 @@ import torch.nn.functional as F
 from torch.func import functional_call
 
 from comce.pipeline.features import evaluation_populations
-from comce.pipeline.io import read_jsonl_strict, sha256
+from comce.pipeline.io import read_jsonl_strict
 from comce.pipeline.resources import load_explained_model
 from comce.stage2.regions import RegionConstructor, region_inputs
 from comce.stage3.ranking import CandidateRanker
@@ -43,27 +43,24 @@ def _journal(run_dir):
     return events
 
 
-def certification_labels(config, models, run_dirs, *, bundle_sha256):
-    """(center, deletion set, real-GNN flip) triples from run directories of TRAIN targets, with provenance checks."""
+def certification_labels(config, run_dirs):
+    """(center, deletion set, real-GNN flip) triples from run directories of TRAIN targets."""
     train_ids, isolation = training_targets(config)
     train_ids = set(train_ids)
     evaluation = {name: set(ids) for name, ids in evaluation_populations(config.paths).items()}
     rows, logs = [], []
     for run_dir in map(Path, run_dirs):
         contract = json.loads((run_dir / 'CONTRACT.json').read_text())
-        expected = dict(dataset=config.dataset, backbone=config.backbone, explained_model_sha256=config.tuple_config['gnn']['sha256'],
-                        model_bundle_sha256=bundle_sha256, signature_bank_sha256=models.metadata['signature_bank']['sha256'])
+        expected = dict(dataset=config.dataset, backbone=config.backbone)
         wrong = {k: (contract.get(k), v) for k, v in expected.items() if contract.get(k) != v}
         if wrong:
-            raise ValueError(f'{run_dir}: certification log of another model or graph: {wrong}')
+            raise ValueError(f'{run_dir}: certification log of another dataset or backbone: {wrong}')
         if contract['population']['split'] != 'train':
             raise ValueError(f'{run_dir}: the certification log is not a run on TRAIN targets (split {contract["population"]["split"]!r})')
         journal = _journal(run_dir)
         requests = run_dir / 'REQUESTS.jsonl'
         for row in read_jsonl_strict(requests):
             center = str(row['center_id'])
-            if row['run_contract_id'] != contract['run_contract_id']:
-                raise ValueError(f'{run_dir}: row of another run')
             shared = [name for name, ids in evaluation.items() if center in ids]
             if shared or center not in train_ids:
                 raise ValueError(f'{run_dir}: target {center} is not a TRAIN target'
@@ -78,16 +75,14 @@ def certification_labels(config, models, run_dirs, *, bundle_sha256):
                 labels.append((tuple(sorted(event['deleted'])), bool(event['flip'])))
             if labels:
                 rows.append(dict(row=row, labels=labels))
-        logs.append(dict(run_dir=str(run_dir), run_contract_id=contract['run_contract_id'], requests_sha256=sha256(requests),
-                         population_id=contract['population']['population_id']))
+        logs.append(dict(run_dir=str(run_dir), targets=len(contract['population']['ordered_ids'])))
     return rows, logs, isolation
 
 
 def rebuild_examples(config, models, labeled, *, device):
     """Region records of the labeled targets rebuilt from the logged pre-intervention response (no GNN call), checked
     against the ranking scores S logged during certification."""
-    io, _ = load_explained_model(config, allowed_ids={str(r['row']['center_id']): 'train' for r in labeled}, device=device,
-                                 explained_model_sha256=models.metadata['explained_model_sha256'])
+    io, _ = load_explained_model(config, allowed_ids={str(r['row']['center_id']): 'train' for r in labeled}, device=device)
     relations = list(config.dataset_config['relations'])
     out, worst = [], 0.0
     for item in labeled:
@@ -166,21 +161,19 @@ def fit_update(module, fit, validation, settings, *, device):
     return {k: v.detach().cpu() for k, v in delta.items()}, 1.0 if improved else 0.0, result
 
 
-def apply_update(models, path, *, bundle_sha256, target_ids):
+def apply_update(models, path, *, target_ids):
     """Load an accepted update into this process's copy of omega; the bundle file and omega_bar stay as they are."""
     import copy
     update = torch.load(path, map_location='cpu', weights_only=True)
     if update.get('format') != UPDATE_FORMAT or update.get('state') != 'omega':
         raise ValueError(f'{path} is not a ComCE WorldModel update')
-    if update['base_bundle_sha256'] != bundle_sha256:
-        raise ValueError(f'{path} was fitted for another model bundle')
     supervised = set(update['supervision']['fit_targets']) | set(update['supervision']['validation_targets'])
     shared = supervised & set(map(str, target_ids))
     if shared:
         raise ValueError(f'{len(shared)} requested target(s) supplied the real-GNN labels of {path}; results on them would '
                          'not measure the updated model on unseen targets')
     gate = float(update['gate'])
-    info = dict(path=str(Path(path).resolve()), sha256=sha256(path), gate=gate, state='omega',
+    info = dict(path=str(Path(path).resolve()), gate=gate, state='omega',
                 supervision_targets=len(supervised))
     if gate:
         omega = copy.deepcopy(models.world_model['omega'])

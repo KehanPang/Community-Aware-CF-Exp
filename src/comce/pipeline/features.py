@@ -1,17 +1,13 @@
 """Stage 1 entry points: validate a dataset's field declaration against its data (writing an editable template when it
-is missing), fit its signature bank, and check that a bank matches the declaration of the configuration that uses it."""
-import json
+is missing) before its signature bank is fitted."""
 import tempfile
 from pathlib import Path
 
 from comce.datasets import GRAPH_SCHEMAS
 from comce.pipeline.config import ResourceConfigurationError
-from comce.pipeline.io import PROJECT_ROOT, sha256
+from comce.pipeline.io import PROJECT_ROOT
 from comce.stage1 import fields
 from comce.stage1.fields import Stage1ConfigurationError
-
-FEATURE_SCHEMA_FILE = 'feature_schema.json'
-FEATURE_SCHEMA_FORMAT = 'comce-feature-schema'
 
 
 def outputs_root(template):
@@ -87,43 +83,10 @@ def stage1_plan(template, dataset, stage1, paths, *, template_output=None):
         if path.exists():
             note = f'the template already at {path} was left unchanged'
         else:
-            fields.write_template(path, dataset=dataset, data_root=data_root, adapter=adapter['name'], schema=schema,
-                                  found=fields.scan_fields(sources, schema), stage1=stage1)
+            fields.write_template(path, dataset=dataset, schema=schema, found=fields.scan_fields(sources, schema), stage1=stage1)
             note = f'a template of the node types and fields found in the data was written to {path}'
         raise Stage1ConfigurationError(
             f'{error} for dataset {dataset!r} (datasets.{dataset}.stage1). Nothing was encoded or fitted; {note}. Choose an '
             f'encoder for every field to use, copy the block into the configuration and run again.',
             missing=True, template_path=path) from None
 
-
-def bank_feature_schema(bank_path, bank):
-    """Fingerprint of the Stage 1 declaration a bank was fitted from: recorded in the bank's provenance, or in the
-    feature_schema.json next to the bank file, which names the bank's SHA256."""
-    recorded = bank.provenance.get('feature_schema')
-    if recorded:
-        return recorded['fingerprint']
-    sidecar = Path(bank_path).with_name(FEATURE_SCHEMA_FILE)
-    if not sidecar.is_file():
-        return None
-    value = json.loads(sidecar.read_text())
-    if value.get('format') != FEATURE_SCHEMA_FORMAT or value.get('signature_bank_sha256') != sha256(bank_path):
-        raise ValueError(f'{sidecar} does not describe {bank_path}')
-    if value['fingerprint'] != fields.fingerprint(value['stage1']):
-        raise ValueError(f'{sidecar} fingerprint does not match its Stage 1 declaration')
-    return value['fingerprint']
-
-
-def check_feature_schema(stage1, bank_path, bank, *, bundle_record=None):
-    """A configuration whose Stage 1 declaration differs from the bank's never loads the bank or the models trained on it."""
-    fitted = bank_feature_schema(bank_path, bank)
-    if bundle_record is not None and bundle_record != fitted:
-        raise Stage1ConfigurationError(f'{bank_path} is not the signature bank the model bundle was trained on')
-    if not fields.declared(stage1):
-        return dict(declared=False, fitted=fitted)
-    expected = fields.fingerprint(fields.feature_schema(stage1))
-    if fitted != expected:
-        raise Stage1ConfigurationError(
-            f'the Stage 1 declaration of the configuration (feature schema {expected[:12]}) is not the one {bank_path} was '
-            f'fitted from ({(fitted or "unrecorded")[:12]}); refit the signature bank with scripts/fit_signatures.py and '
-            f'retrain the model bundles with scripts/train_comce.py before using it')
-    return dict(declared=True, fitted=fitted)

@@ -3,8 +3,6 @@
 Every query runs M on the whole graph. The legal domain of a target is the 3-hop receptive field through the
 shared attribute vertices.
 """
-import hashlib
-import json
 from pathlib import Path
 
 import numpy as np
@@ -15,7 +13,7 @@ from comce.datasets.schema import GraphSchema
 
 
 class FullGraphIO:
-    def __init__(self, resources, options, *, device, allowed_ids, identity=None):
+    def __init__(self, resources, options, *, device, allowed_ids):
         self.options = options
         self.device = device
         self.allowed_ids = {str(c): str(s) for c, s in allowed_ids.items()}
@@ -26,8 +24,6 @@ class FullGraphIO:
         if len(self.relations) != 2 * count or len(self.types) != count + 1:
             raise ValueError('Full-graph schema needs one forward and one reverse message relation per edge type')
         graph = torch.load(Path(resources['data']) / options['graph'], map_location='cpu', weights_only=False)
-        self.identity = options['graph_identity']
-        self.feature_schema = options['feature_schema_sha']
         self.node_ids = graph['node_ids']
         self.offsets = graph['offsets']
         self.src, self.dst, self.rel = (np.asarray(graph[k], np.int64) for k in ('src', 'dst', 'rel'))
@@ -62,8 +58,6 @@ class FullGraphIO:
 
     def load_model(self, checkpoint_path, decision, *, device):
         checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=True)
-        if checkpoint['graph'] != self.identity or checkpoint['feature_schema'] != self.feature_schema:
-            raise ValueError('GNN checkpoint graph/feature binding mismatch')
         gnn = self.options['gnn']
         architecture = dict(input_dims=dict(self.input_dims), relations=[list(r) for r in self.relations],
                             target_type=self.types[0], num_classes=int(decision['num_classes']), gnn_type=checkpoint['kind'],
@@ -94,16 +88,13 @@ class FullGraphIO:
         self.positions, self.hops = self.domain(self.center_local)
         keys = [self.keys[p] for p in self.positions]
         batch = GraphBatch(self.x, self.edges, self.types[0], torch.tensor([self.center_local], device=self.device))
-        fingerprint = hashlib.sha256(json.dumps(dict(graph=self.identity, center=self.center, split=split,
-                                                     domain=hashlib.sha256('\n'.join(sorted(keys)).encode()).hexdigest()),
-                                                sort_keys=True).encode()).hexdigest()
         self.observation = None
-        self.current = CertificationContext(batch, self.center, fingerprint, CanonicalEdgeDomain(tuple(sorted(keys))),
+        self.current = CertificationContext(batch, self.center, CanonicalEdgeDomain(tuple(sorted(keys))),
                                             {k: self.columns[k] for k in keys})
         return self.current
 
     def accept_observation(self, observation):
-        if observation.context_fingerprint != self.current.graph_fingerprint or observation.deleted:
+        if observation.deleted:
             raise ValueError('Only this request original observation supplies Region inputs')
         self.observation = observation
         self.q0 = observation.response()

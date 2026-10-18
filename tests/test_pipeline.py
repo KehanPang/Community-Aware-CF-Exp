@@ -12,9 +12,10 @@ from comce.pipeline.run import run_population
 ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE = load_template(ROOT / 'yaml.template')
 TAGS = [f'{d}/{b}' for d in TEMPLATE['tuples'] for b in TEMPLATE['tuples'][d]]
-SCIENTIFIC = ('center_id', 'success', 'returned_edge_keys', 'total_queries', 'candidate_set_sha256', 'candidate_score_sha256',
-              'candidate_schedule_sha256', 'macro_domain_edge_keys', 'pool_size', 'community_count', 'q0', 'events', 'attempts',
-              'cleanup_attempts', 'selection_trace', 'stage3_stats', 'query_ledger', 'exact_certified', 'true_e123')
+SCIENTIFIC = ('center_id', 'success', 'returned_edge_keys', 'total_queries', 'macro_domain_edge_keys', 'pool_size',
+              'community_count', 'q0', 'events', 'attempts', 'cleanup_attempts', 'selection_trace', 'stage3_stats', 'query_ledger',
+              'exact_certified', 'true_e123')
+REFERENCE = ('success', 'returned_edge_keys', 'total_queries', 'macro_domain_edge_keys', 'pool_size', 'community_count')
 
 pytestmark = pytest.mark.skipif(not torch.cuda.is_available(), reason='needs CUDA')
 
@@ -35,8 +36,7 @@ def test_frozen_dev_request_is_reproduced_and_certified(tag, tmp_path, resource_
     dataset, backbone = tag.split('/')
     expected = reference[tag]
     row = run(resolve(resource_template, dataset, backbone), expected['center_id'], tmp_path)
-    for key in ('success', 'returned_edge_keys', 'total_queries', 'candidate_set_sha256', 'candidate_score_sha256',
-                'candidate_schedule_sha256', 'macro_domain_edge_keys', 'pool_size', 'community_count'):
+    for key in REFERENCE:
         assert row[key] == expected[key], key
     assert row['q0']['probs'] == expected['q0_probs'] and row['stage3_stats']['bit_words'] == expected['bit_words']
     assert row['actual_blackbox_forwards'] == row['total_queries'] <= 12
@@ -62,8 +62,8 @@ def test_explanations_never_read_hidden_activations(dataset, tmp_path, monkeypat
         return logits, Poison()
     monkeypatch.setattr(backbones.StandardBackbone, 'forward', poisoned)
     row = run(resolve(resource_template, dataset, backbone), expected['center_id'], tmp_path)
-    assert row['returned_edge_keys'] == expected['returned_edge_keys']
-    assert row['candidate_score_sha256'] == expected['candidate_score_sha256']
+    assert {k: row[k] for k in REFERENCE} == {k: expected[k] for k in REFERENCE}
+    assert row['q0']['probs'] == expected['q0_probs'] and row['stage3_stats']['bit_words'] == expected['bit_words']
 
 
 def renamed_template(template, dataset, backbone, alias_dataset, alias_backbone, tmp_path, root=None):

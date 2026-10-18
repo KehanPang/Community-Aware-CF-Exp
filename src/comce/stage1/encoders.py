@@ -1,9 +1,6 @@
 """Signature bank fitting from a validated Stage 1 declaration (comce.stage1.fields)."""
-from pathlib import Path
-
 import numpy as np
 
-from comce.pipeline.io import sha256
 from comce.stage1 import fields as declarations
 from comce.stage1.signatures import SignatureBank, project_rows, quantile_thresholds, random_directions
 
@@ -90,23 +87,13 @@ def fit_signature_bank(plan):
     coordinates = {t: np.asarray(coordinates[t], np.float32) for t in plan.fields}
     pooled = np.concatenate([coordinates[t][np.asarray(sorted(rows), np.int64)] for t, rows in plan.train_rows.items() if len(rows)])
     thresholds = quantile_thresholds(pooled.astype(np.float64), int(stage1['quantile_buckets']))
-    root = plan.sources.root
-    field_provenance = {}
-    for node_type, entry in plan.fields.items():
-        field_provenance[node_type] = []
-        for field in entry['entries']:
-            spec = dict(field['spec'])
-            if 'source' in spec:
-                spec['source_sha256'] = sha256(root / spec['source']['file'])
-            if field['encoder'] == 'sbert':
-                spec['model_sha256'] = declarations.model_digest(spec['model'])
-            field_provenance[node_type].append(spec)
-    provenance = dict(feature_schema=dict(fingerprint=plan.fingerprint, stage1=plan.feature_schema), fields=field_provenance,
+    field_provenance = {node_type: [dict(field['spec']) for field in entry['entries']] for node_type, entry in plan.fields.items()}
+    provenance = dict(feature_schema=plan.feature_schema, fields=field_provenance,
                       neighbor_aggregation=described, projection='fixed_seeded_gaussian_unit_columns',
                       projection_seed=int(stage1['projection_seed']), representation_dimension=dimension,
                       dimensions=int(stage1['projection_dimensions']), buckets=int(stage1['quantile_buckets']),
                       threshold_fit='quantiles over TRAIN-split nodes only',
                       train_nodes={t: len(rows) for t, rows in plan.train_rows.items()}, train_isolation=plan.isolation,
-                      inputs={name: sha256(Path(root) / name) for name in sorted(inputs)},
+                      inputs=sorted(inputs),
                       model_hidden_states_used=False, backbone_independent=True)
     return SignatureBank(coordinates, thresholds, provenance)

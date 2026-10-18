@@ -1,64 +1,52 @@
-# ComCE runtime and training configuration.
-# Parameter precedence (highest first):
-#   command line > tuples.<dataset>.<backbone> > datasets.<dataset> > dataset_defaults > paper_defaults
-# Fields fixed by a model bundle (Set Transformer slots/heads/width, signature dimensions and buckets) must
-# equal the bundle's architecture; a mismatch is an error, never a silent override.
-# Every external path is empty: set the ones a task reads (data, explained GNN, ComCE bundle, signature bank,
-# populations, outputs) before running it. A task that needs an empty path stops with ResourceConfigurationError
-# naming the key, before anything is loaded.
+# Fill in the empty paths ("") needed by the task you run. Paths are absolute or relative to resources.root;
+# resources.root and outputs.root are absolute or relative to this file.
 
 paper_defaults:
   stage1:
-    projection_dimensions: 8          # d_s fixed random directions shared by every node type
-    quantile_buckets: 16              # buckets per coordinate; one bucketizer for every node type, fitted on TRAIN nodes only
-    representation_dimension: 64      # d: every node type is encoded into this one space before the projection
+    projection_dimensions: 8
+    quantile_buckets: 16
+    representation_dimension: 64
     fit_split: train
   stage2:
-    relevance_threshold: 0.10         # tau
-    query_slots: 3                    # K
+    relevance_threshold: 0.10
+    query_slots: 3
     attention_heads: 4
     hidden_width: 128
-    domain_edge_cap: null             # Eq. (2): every community with p >= tau is admitted
+    domain_edge_cap: null
   stage3:
-    explanation_budget: 10            # B
-    rollouts: 32                      # N_roll
-    failure_threshold: 0.5            # tau_low
-    failures_before_expansion: 4      # f_max
-    expansion_budget: 8               # B_ext
-    expansion_communities_per_trigger: 1   # Expand adds one community per trigger
-    certification_queries: 9          # Q
-    lookahead: 2                      # l
-    cleanup_queries: 2                # Q_clean
-    dedup_threshold: 0.9              # tau_dup, Jaccard-greedy RankDedup (skip if J > tau_dup)
-    proposals_per_step: 1             # actions are sampled from pi_xi
+    explanation_budget: 10
+    rollouts: 32
+    failure_threshold: 0.5
+    failures_before_expansion: 4
+    expansion_budget: 8
+    expansion_communities_per_trigger: 1
+    certification_queries: 9
+    lookahead: 2
+    cleanup_queries: 2
+    dedup_threshold: 0.9
+    proposals_per_step: 1
     guidance_scale: 0.0
     temperature: 1.0
 
 dataset_defaults:
   stage1:
-    # Raw field -> representation x_v (encoder per field: sbert | lsh | precomputed | neighbor_mean) -> d_s shared
-    # directions -> shared bucketizer. scripts/fit_signatures.py needs node_types and train_nodes and writes a template
-    # of the data's node types and fields when they are missing; inference only loads the fitted bank.
-    projection_seed: 20261017         # seed of the d_s shared random directions
-    reducer: null                     # {method: pca} (fitted on TRAIN nodes) | {method: random_projection, seed: <int>}
+    projection_seed: 20261017
+    reducer: null
     node_types: null
     train_nodes: null
   stage2:
-    # Trade-off: a unique-edge cap on the admitted domain bounds the policy's action space; null restores Eq. (2).
     domain_edge_cap: null
-    admission_exponent: 1.0           # under a cap: admission utility = p / (marginal edit cost) ** exponent
-    fallback_min_domain_edges: 10     # soft fallback fills D_u up to this many edges (the paper gives no size); 10 = B
+    admission_exponent: 1.0
+    fallback_min_domain_edges: 10
   stage3:
-    # Trade-off: K policy proposals reweighted by exp(guidance_scale * S); proposals_per_step 1 or guidance_scale 0
-    # samples pi_xi exactly as in the paper.
     proposals_per_step: 4
     guidance_scale: 0.5
     guidance_batch_size: 4
-    expansion_communities_per_trigger: all   # Trade-off: admit every fitting community per trigger; 1 = paper
-    temperature: 1.0                  # policy sampling temperature
+    expansion_communities_per_trigger: all
+    temperature: 1.0
     edit_cost: {mode: uniform, default_weight: 1.0}
   task:
-    prediction: checkpoint            # checkpoint | positive_only
+    prediction: checkpoint
     min_receptive_edges_exclusive: null
     allowed_target_ids: null
   execution:
@@ -69,26 +57,22 @@ dataset_defaults:
     allow_tf32: false
 
 resources:
-  root: ""                            # paths below are absolute or relative to root (root: absolute or relative to this file)
-  verify_checksums: true
+  root: ""                  # base directory of the resource paths below
 
 outputs:
-  root: ""                            # run results, Stage 1 templates and fitted banks (never inside the release)
+  root: ""                  # directory for run results and fitted signature banks
 
 datasets:
   claim:
     resources:
-      data: ""                          # directory of the files below
-      signature_bank: ""                # signature_bank.pt, with its feature_schema.json beside it
-      populations:
+      data: ""              # dataset directory
+      signature_bank: ""    # signature_bank.pt
+      populations:          # target ID lists
         dev: ""
         confirm: ""
         dev_full: ""
         test1000: ""
         labeled: ""
-      files:                            # SHA256 of files in the data directory
-        graph.pt: 6d9367393b3edc4d689af6108025ae4c7b3a36e0de875f41bb9ab752730826ea
-        SPLIT.pt: 3ada39586da222178bad4459bb740e5d1f34cd7a02a2bdb113c25dcb560c3829
     adapter:
       name: full_graph
       options:
@@ -103,8 +87,6 @@ datasets:
           - [beneficiary, has_claim, claim]
           - [provider, serves_claim, claim]
           - [diagnosis_group, groups_claim, claim]
-        graph_identity: b1759320e75c4748803ce9954273353294d20c6ad1b0aa9354e6eba223b7184f
-        feature_schema_sha: 02a03b1d56797aad986035b6693cbed08ae39d48739d9cea6fcc28aae3018228
         gnn: {hidden: 64, layers: 3, dropout: 0.2, heads: 4}
     relations: [claim_beneficiary, claim_provider, claim_diagnosis_group]
     decision:
@@ -115,7 +97,6 @@ datasets:
       deployment_temperature: 1.0
       class_vocabulary: [NotFraud, PotentialFraud]
     stage1:
-      # Numeric attributes: TRAIN standardization and a seeded Gaussian random projection to d = 64 per node type.
       node_types:
         claim:
           fields:
@@ -134,7 +115,7 @@ datasets:
             - {name: attributes, source: {file: graph.pt, key: x.diagnosis_group}, encoder: lsh, input_kind: numeric_vector,
                standardize: train, output_dimension: 64, seed: 20261121}
       train_nodes:
-        seed: {node_type: claim, source: {file: graph.pt, key: split}, equals: 0}   # native TRAIN split
+        seed: {node_type: claim, source: {file: graph.pt, key: split}, equals: 0}
         propagate:
           - [claim, claim_beneficiary, beneficiary]
           - [claim, claim_provider, provider]
@@ -144,28 +125,22 @@ datasets:
     execution:
       random_seed: 20260919
     training:
-      population_path: ""
+      population_path: ""   # TRAIN target ID list
       evaluation_populations: [dev, confirm, dev_full, test1000]
       sampling_seed: null
-      labeled_population: labeled       # 30,000 labeled claims: U_tr = 6,000 under target_fraction 0.2
-      targets: 80                       # protocol of the published bundles
+      labeled_population: labeled
+      targets: 80
       target_fraction: null
       supervision_sets: 24
 
   computer:
     resources:
-      data: ""
-      signature_bank: ""
-      populations:
+      data: ""              # dataset directory
+      signature_bank: ""    # signature_bank.pt
+      populations:          # target ID lists
         dev: ""
         test: ""
         test1000: ""
-      files:
-        metadata.parquet: 78d6e32948b0d12e614e44027a851762f349b50645778f62a4f52b771a9e8663
-        author_ids.pt: 54aca7c4ba574a472e5fa90c9d89f977a8ced67518255d598b6bd641664a6d74
-        graph_arrays.npz: 225c8a342d86b412be5d06b83c8607d8d4048d39f8d63d5196f52da811451f38
-        paper_inputs.npy: 0a623cd25001d9d209974ca44754d55b99971ff976474572602610e218ae59d7
-        author_inputs.npy: c8d1e4473c62816ad67dcef4382867a093fde9a135b444afa9bb547329e3d2fe
     adapter:
       name: citation_graph
       options:
@@ -181,17 +156,12 @@ datasets:
       threshold: 0.5
       positive_class: 1
       deployment_temperature: 1.0
-      class_vocabulary_sha256: b49ce7c4afa983fe035b342d56cbf54e35a8c0715f088beecd50efa8b5699a9e
     stage1:
-      representation_dimension: 768   # the published bank uses the existing 768-d embeddings as they are (no reducer)
+      representation_dimension: 768
       node_types:
         paper:
           fields:
-            - name: text_embedding
-              source: {file: paper_text_embeddings.npy}
-              encoder: precomputed
-              output_dimension: 768
-              description: existing 768-d paper text embeddings shipped with the data; the encoder that produced them is not recorded
+            - {name: text_embedding, source: {file: paper_text_embeddings.npy}, encoder: precomputed, output_dimension: 768}
         author:
           fields:
             - {name: papers, encoder: neighbor_mean, relation: [paper, paper_written_by_author, author], empty: zero}
@@ -204,23 +174,21 @@ datasets:
     execution:
       random_seed: 20260910
     training:
-      population_path: ""
+      population_path: ""   # TRAIN target ID list
       evaluation_populations: [dev, test, test1000]
       sampling_seed: null
-      targets: 300                      # protocol of the published bundles; no labeled-vertex population is published (16,985 TRAIN targets)
+      targets: 300
       target_fraction: null
       supervision_sets: 32
 
   goodreads:
     resources:
-      data: ""
-      signature_bank: ""
-      train_centers: ""                 # TRAIN target IDs of the Stage 1 seed below
-      populations:
+      data: ""              # dataset directory
+      signature_bank: ""    # signature_bank.pt
+      train_centers: ""     # TRAIN target ID list used by train_nodes below
+      populations:          # target ID lists
         dev: ""
         test1000: ""
-      files:
-        graph.pt: ba777b56c8bcc690c495b1f79e6f41cdc45956fdb8b00f9d114ac8c0dddeeaa5
     adapter:
       name: typed_graph
       options:
@@ -246,40 +214,23 @@ datasets:
       threshold: 0.5
       positive_class: 1
       deployment_temperature: 1.0
-      class_vocabulary_sha256: a758323aa954960e89179022f813e62ddf2d402599e67056f4b33f370fe4929a
     stage1:
-      representation_dimension: 768   # the published bank uses the existing 768-d embeddings as they are (no reducer)
+      representation_dimension: 768
       node_types:
         book:
           fields:
-            - name: embedding
-              source: {file: book_features.npy}
-              encoder: precomputed
-              output_dimension: 768
-              description: existing 768-d book embeddings shipped with the data; the encoder that produced them is not recorded
+            - {name: embedding, source: {file: book_features.npy}, encoder: precomputed, output_dimension: 768}
         review:
           fields:
-            - name: embedding
-              source: {file: review_features.npy}
-              encoder: precomputed
-              output_dimension: 768
-              description: existing 768-d review embeddings shipped with the data; the encoder that produced them is not recorded
+            - {name: embedding, source: {file: review_features.npy}, encoder: precomputed, output_dimension: 768}
         user:
           fields:
-            - name: embedding
-              source: {file: user_features.npy}
-              encoder: precomputed
-              output_dimension: 768
-              description: existing 768-d user embeddings shipped with the data; the encoder that produced them is not recorded
+            - {name: embedding, source: {file: user_features.npy}, encoder: precomputed, output_dimension: 768}
         author:
           fields:
-            - name: embedding
-              source: {file: author_features.npy}
-              encoder: precomputed
-              output_dimension: 768
-              description: existing 768-d author embeddings shipped with the data; the encoder that produced them is not recorded
+            - {name: embedding, source: {file: author_features.npy}, encoder: precomputed, output_dimension: 768}
       train_nodes:
-        seed: {node_type: book, source: {resource: train_centers}}   # target IDs listed in resources.train_centers
+        seed: {node_type: book, source: {resource: train_centers}}
         propagate:
           - [book, book_has_review, review]
           - [review, review_written_by_user, user]
@@ -289,93 +240,73 @@ datasets:
     execution:
       random_seed: 20260910
     training:
-      population_path: ""
+      population_path: ""   # TRAIN target ID list
       evaluation_populations: [dev, test1000]
       sampling_seed: null
-      targets: 300                      # protocol of the published bundles; no labeled-vertex population is published (1,477 TRAIN targets)
+      targets: 300
       target_fraction: null
       supervision_sets: 32
 
-# Recommended configurations validated on the registered DEV100 targets with the published ComCE bundles. model is the
-# ComCE bundle (comce.pt); gnn.checkpoint is the explained GNN, pinned by gnn.sha256.
+# model: ComCE model bundle (comce.pt); gnn: explained GNN checkpoint.
 tuples:
   claim:
     gcn:
       model: ""
-      gnn: {checkpoint: "", sha256: 212b691e2a12a7c1bc121891a5130bcaf34cb83b5b813cbf887973935b33891f}
+      gnn: ""
       stage2: {relevance_threshold: 0.1, domain_edge_cap: 8, admission_exponent: 1.0}
       stage3: {expansion_budget: 8}
     graphsage:
       model: ""
-      gnn: {checkpoint: "", sha256: 66b1893370b2fad66ba9590692e926287e433021636745c1713a68da9934fea7}
+      gnn: ""
       stage2: {relevance_threshold: 0.3, domain_edge_cap: 12, admission_exponent: 1.0}
       stage3: {expansion_budget: 12}
     hgt:
       model: ""
-      gnn: {checkpoint: "", sha256: 0a0b90e622975270524f64d187b9f0253003155344e09ab5a5d10cf0f9182154}
+      gnn: ""
       stage2: {relevance_threshold: 0.005, domain_edge_cap: 12, admission_exponent: 1.0}
       stage3: {expansion_budget: 12}
   computer:
     gcn:
       model: ""
-      gnn: {checkpoint: "", sha256: 71c6eb9fb023701f921f9df9cb7e3c402de6ef252bc9574825cee0c835ca8b37}
+      gnn: ""
       stage2: {relevance_threshold: 0.005, domain_edge_cap: 24, admission_exponent: 0.25}
       stage3: {expansion_budget: 24}
     graphsage:
       model: ""
-      gnn: {checkpoint: "", sha256: b50a2ff7f68961eb51919dfd0c0fb18d8091e520228e8545bbb3e209576ca405}
+      gnn: ""
       stage2: {relevance_threshold: 0.005, domain_edge_cap: 24, admission_exponent: 0.25}
       stage3: {expansion_budget: 24}
     hgt:
       model: ""
-      gnn: {checkpoint: "", sha256: c150b61c1576dd82d25172eec6eb0e603144a576f268d85d0985f633454a382f}
+      gnn: ""
       stage2: {relevance_threshold: 0.005, domain_edge_cap: 24, admission_exponent: 0.25}
       stage3: {expansion_budget: 24}
   goodreads:
     gcn:
       model: ""
-      gnn: {checkpoint: "", sha256: c922cde674e7226e7a31a8d914f006f0fe30edf3809426c82e7081fe24ad5b0f}
+      gnn: ""
       stage2: {relevance_threshold: 0.05, domain_edge_cap: 16, admission_exponent: 1.0}
       stage3: {expansion_budget: 16}
     graphsage:
       model: ""
-      gnn: {checkpoint: "", sha256: 8e46a1dfeea6df5f2d9d53f49d79ce51b83b3aa52a3c4e5c5e4b57a806f42e71}
+      gnn: ""
       stage2: {relevance_threshold: 0.05, domain_edge_cap: 16, admission_exponent: 1.0}
       stage3: {expansion_budget: 16}
     hgt:
       model: ""
-      gnn: {checkpoint: "", sha256: 3b725a445fe4c6c7b7f2a584d9f8a8046f475b371192a1d26428670edc1fc626}
+      gnn: ""
       stage2: {relevance_threshold: 0.05, domain_edge_cap: 16, admission_exponent: 1.0}
       stage3: {expansion_budget: 16}
 
-# Offline training (TRAIN split only). scripts/train_comce.py writes new bundles; the published bundles are not retrained.
-# U_tr per dataset (datasets.<d>.training), highest precedence first:
-#   targets: <int>             the first <int> eligible targets of population_path
-#   targets: all               every eligible target of population_path
-#   target_fraction: <f>       the first round(f x |labeled_population|) targets of population_path
-#   training.target_fraction   the same with the paper's 20% when the dataset sets neither (targets and target_fraction
-#                              of one dataset are mutually exclusive)
-# sampling_seed: null walks population_path in file order; an integer shuffles it with that seed first. Training stops
-# when population_path shares a canonical target ID with any evaluation_populations entry.
 training:
   seed: 20261017
-  target_fraction: 0.2                # |U_tr| = 20% of the labeled vertices
+  target_fraction: 0.2
   holdout_fraction: 0.2
-  # The paper leaves the selector loss L({p_i}, M) unspecified; lambda_community and lambda_membership supervise
-  # communities with witness-derived labels (0 keeps only witness coverage, size, entropy and slot diversity).
   selector: {epochs: 30, lr: 0.001, lambda_cover: 1.0, lambda_size: 0.2, lambda_community: 1.0, lambda_membership: 0.1,
              lambda_membership_entropy: 0.02, lambda_slot_diversity: 0.08}
   world_model: {epochs: 60, lr: 0.001, hidden: 64}
-  # Reward R = lambda_flip p_omega - lambda_size |D|/B - lambda_div (1 - nov). imitation_epochs, bc_anchor_weight and
-  # entropy_weight add terms outside that objective; 0 for all three trains on the reward alone (REINFORCE).
-  # stop_aux_weight weights the Stop action in the teacher-forced terms (1.0 = plain cross-entropy over all actions).
   policy: {imitation_epochs: 8, reinforce_epochs: 8, rollouts: 8, lr: 0.001, entropy_weight: 0.01, lambda_flip: 1.0,
            lambda_size: 0.1, lambda_div: 0.1, bc_anchor_weight: 0.5, stop_aux_weight: 1.0}
   adaptation: {top_sets: 12, random_sets: 8, epochs: 40, lr: 0.0005, residual_epochs: 300, residual_lr: 0.01}
-  # Optional update of omega (scripts/update_world_model.py), never applied unless run_comce.py is given the update:
-  # omega_eff = omega + gate * delta. delta is fitted on real-GNN certification labels of TRAIN targets (BCE +
-  # l2_weight ||delta||^2 + stability_weight BCE(p_eff, p_omega)); gate = 1 only when the validation BCE on held-out
-  # TRAIN targets drops by more than min_improvement with at least min_validation_labels labels, else gate = 0.
-  # These settings are engineering choices; the paper does not specify them.
   world_model_update: {epochs: 200, lr: 0.001, l2_weight: 0.001, stability_weight: 0.1, validation_fraction: 0.3,
                        min_validation_labels: 50, min_improvement: 0.005, seed: 20261017}

@@ -1,7 +1,5 @@
 """The explained GNN M behind its classification interface and the per-request exact oracle."""
 from dataclasses import dataclass, field
-import hashlib
-import json
 from typing import Mapping
 
 import torch
@@ -40,7 +38,6 @@ class CanonicalEdgeDomain:
 class CertificationContext:
     graph: GraphBatch
     center_id: str
-    graph_fingerprint: str
     domain: CanonicalEdgeDomain
     columns: Mapping[str, tuple[tuple[tuple, int], ...]]
 
@@ -70,8 +67,6 @@ class GNNOutput:
 @dataclass
 class Observation:
     output: GNNOutput
-    model_fingerprint: str
-    context_fingerprint: str
     deleted: tuple[str, ...]
     runtime_record: dict | None = None
 
@@ -82,15 +77,6 @@ class Observation:
         pred = int(self.output.prediction[0])
         before = pred if original is None else int(original.output.prediction[0])
         return dict(probs=p, pred=pred, original_pred=before, score=p[before], flip=bool(self.deleted and pred != before))
-
-
-def state_fingerprint(config, state):
-    h = hashlib.sha256(json.dumps(config, sort_keys=True, separators=(',', ':')).encode())
-    for key, value in sorted(state.items()):
-        v = value.detach().cpu().contiguous()
-        h.update(key.encode()); h.update(str(v.dtype).encode()); h.update(str(tuple(v.shape)).encode())
-        h.update(v.reshape(-1).view(torch.uint8).numpy().tobytes())
-    return h.hexdigest()
 
 
 class ExplainedModel(nn.Module):
@@ -111,7 +97,6 @@ class ExplainedModel(nn.Module):
             raise ValueError('Only the frozen standard GNN backbones are supported')
         self.backbone = StandardBackbone(**architecture)
         self.register_buffer('deployment_temperature', torch.tensor(float(deployment_temperature)))
-        self._frozen_fingerprint = None
 
     def forward(self, graph_batch):
         if graph_batch.target_type != self.architecture['target_type']:
@@ -122,25 +107,14 @@ class ExplainedModel(nn.Module):
         probs = deployed.softmax(-1)
         return GNNOutput(raw, deployed, probs, self.decision_spec.prediction(probs))
 
-    def metadata(self):
-        return dict(format='comce_gnn_state_dict', architecture=self.architecture,
-                    decision_spec=vars(self.decision_spec), class_vocabulary=list(self.class_vocabulary))
-
-    def fingerprint(self):
-        return self._frozen_fingerprint or state_fingerprint(self.metadata(), self.state_dict())
-
     @classmethod
     def from_state(cls, payload, *, device='cpu'):
         model = cls(payload['architecture'], payload['decision_spec'], payload['class_vocabulary'])
         model.load_state_dict(payload['state_dict'], strict=True)
-        if state_fingerprint(model.metadata(), model.state_dict()) != payload['fingerprint']:
-            raise ValueError('Checkpoint metadata/state fingerprint mismatch')
         return model.to(device)
 
     def seal(self):
-        self.eval().requires_grad_(False)
-        self._frozen_fingerprint = state_fingerprint(self.metadata(), self.state_dict())
-        return self
+        return self.eval().requires_grad_(False)
 
     def explanation_eligible(self, observation):
         return self.decision_spec.kind != 'positive_to_negative' or bool(observation.output.prediction[0] == 1)
@@ -153,7 +127,6 @@ class ExactOracle:
         self.query_cap = query_cap
         self.logical = self.physical = 0
         self.q0 = None
-        self.identity = None
 
     @torch.no_grad()
     def query(self, model, context, deleted):
@@ -162,10 +135,6 @@ class ExactOracle:
         if context.graph.targets.numel() != 1:
             raise ValueError('One target per counted oracle context')
         deleted = context.domain.validate(deleted)
-        identity = (model.fingerprint(), context.graph_fingerprint, context.center_id)
-        if self.identity is not None and self.identity != identity:
-            raise ValueError('Request-local oracle cannot cross model/context/center')
-        self.identity = identity
         if not deleted and self.q0 is not None:
             return self.q0
         if deleted and self.q0 is None:
@@ -175,7 +144,7 @@ class ExactOracle:
         self.logical += 1
         self.physical += 1
         output = model(context.delete(deleted) if deleted else context.graph)
-        result = Observation(output, identity[0], context.graph_fingerprint, deleted)
+        result = Observation(output, deleted)
         before = self.q0.output if self.q0 is not None else output
         p = output.probabilities[0].detach().cpu().tolist()
         pred = int(output.prediction[0])
