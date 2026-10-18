@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "comce"
+version = "1.0.0"
+description = "Community-guided counterfactual explanations for graph neural networks"
+requires-python = ">=3.12"
+dependencies = ["numpy==1.26.4", "pandas==2.2.2", "pyarrow==23.0.1", "scipy==1.13.1", "torch==2.6.0+cu124",
+                "torch-geometric==2.7.0", "PyYAML==6.0.1"]
+
+[project.optional-dependencies]
+test = ["pytest==7.4.4"]
+# Stage 1 fields declared with encoder: sbert.
+sbert = ["sentence-transformers==5.4.1"]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["comce*"]
+
+[tool.setuptools.package-data]
+"comce.stage2" = ["region_program.yaml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

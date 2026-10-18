@@ -1,0 +1,74 @@
+constants:
+  signature_m: 16
+  signature_divisor: 4
+  signature_dims: 1
+  center_cut: 0.5
+coordinates:
+  center: stage1.shared_random_projection
+  token: stage1.shared_random_projection
+program:
+  n: len(edges)
+  nrel: len(relation_names)
+  cs: quantize(center_z[None,:], cutpoints)[0]
+  ss: quantize(source_z, cutpoints)
+  ds: quantize(target_z, cutpoints)
+  edge_z: (source_z + target_z) / 2.
+  ts: quantize(edge_z, cutpoints)
+  match: mean(ts == cs, axis=1)
+  related: cast(match >= center_cut, 'int64')
+  endpoint_pairs: endpoint_pairs(edges)
+  motifs: where(field(edges, 'src_type') == field(edges, 'dst_type'), 'same_type', 'cross_type')
+  src_degree: endpoint_degree(edges, 'src')
+  dst_degree: endpoint_degree(edges, 'dst')
+  prob: cast(probabilities, 'float64')
+  top: sort(prob)[::-1]
+  entropy: float(-sum(prob*log(maximum(prob, 1e-12))))
+  hop_counts: bincount(hops, minlength=4)[1:4]
+  relation_counts: bincount(relations, minlength=nrel)
+  X: cast(concat([eye(3)[hops-1], eye(nrel)[relations], columns(match, mean(ss == cs, axis=1), mean(ds == cs, axis=1), mean(ss == ds, axis=1), log1p(src_degree), log1p(dst_degree), n=n), ts/(signature_m-1.), abs(ts-cs)/(signature_m-1.)], axis=1), 'float32')
+  state: cast(row(top[0], top[0]-top[1], entropy, log1p(n), log1p(hop_counts), relation_counts/maximum(1, n), eye(num_classes)[prediction]), 'float32')
+  u12: int(sum(hops <= 2))
+  u3: int(sum(hops == 3))
+views:
+- name: relaxed_signature
+  key: nearest_signature_keys(cs, ts, match, divisor=signature_divisor, dimensions=signature_dims, cut=center_cut)
+  id_format: center{center}_{family}_{digest}
+- name: hop_type_community
+  key: json_keys([hops, field(edges, 'edge_type'), related])
+  id_format: center{center}_{family}_{digest}
+- name: endpoint_motif
+  key: json_keys([endpoint_pairs, motifs, hops])
+  id_format: center{center}_{family}_{digest}
+community_program:
+  a: X[mi]
+  h: hops[mi]
+  r: relations[mi]
+  modal: mode(ts[mi], tie='lowest')
+  mode_sig: modal[0]
+  purity: modal[1]
+  feature: row(log1p(size), size/n, bincount(h, minlength=4)[1:4]/size, bincount(r, minlength=nrel)/size, mean(a, axis=0), max(a, axis=0), purity)
+signature_output: mode_sig
+feature_output: feature
+outputs:
+  center_id: center_id
+  pred_before: prediction
+  pred_before_label: prediction_label
+  edge_keys: list(field(edges, 'canonical_key'))
+  edges: edges
+  hops: hops
+  edge_rows: X
+  center_sig: cs
+  center_state: state
+  communities: communities
+  community_sigs: community_sigs
+  community_feats: community_feats
+  witness_edge_keys: witness_keys
+  witness_indices: witness_indices
+  u12_size: u12
+  u3_size: u3
+  u123_size: n
+  edge_signatures: ts
+representations:
+  center: quantile_bucket_ids
+  token: quantile_bucket_ids
+  base: quantile_bucket_ids
