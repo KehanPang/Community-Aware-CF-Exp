@@ -26,5 +26,4 @@ include = ["comce*"]
 "comce.stage2" = ["region_program.yaml"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
 pythonpath = ["src"]
