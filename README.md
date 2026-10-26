@@ -30,4 +30,4 @@ For GPU execution, use `--set execution.device=cuda:0`. You can also select a ta
 ## Full Version
 
 * The **full version** of the paper can be accessed at this file: [ComCE.pdf](https://anonymous.4open.science/r/Community-Aware-CF-Exp-77ED/ComCE.pdf)
-* The **dataset** are available at this link: [Google Drive](https://drive.google.com/file/d/14C7nQDE48RJXZkb_LD_87xVG7FQInRiX)
+* The **dataset** are available at this link: [Google Drive](https://drive.google.com/file/d/1l2sSmynIQQOgpdXGIhJf0kTfB7rAQtVm)
